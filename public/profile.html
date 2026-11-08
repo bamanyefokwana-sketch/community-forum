@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Profile</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main class="narrow">
+    <h1 id="page-title">My profile</h1>
+    <p class="muted" id="role-line"></p>
+    <div id="banner"></div>
+
+    <form class="card hidden" id="details-form">
+      <h2 style="margin-top: 0">Details</h2>
+      <label for="full-name">Full name</label>
+      <input type="text" id="full-name" required maxlength="100" autocomplete="name">
+      <label for="email">Email</label>
+      <input type="email" id="email" required autocomplete="username">
+      <label for="area">Your area</label>
+      <select id="area"></select>
+      <p class="error" id="details-error"></p>
+      <button type="submit">Save details</button>
+    </form>
+
+    <form class="card" id="password-form">
+      <h2 style="margin-top: 0" id="password-title">Change password</h2>
+      <label for="current-password" id="current-label">Current password</label>
+      <input type="password" id="current-password" required autocomplete="current-password">
+      <label for="new-password">New password <span class="muted small">(at least 8 characters)</span></label>
+      <input type="password" id="new-password" required minlength="8" autocomplete="new-password">
+      <p class="error" id="password-error"></p>
+      <button type="submit">Change password</button>
+    </form>
+
+    <form class="card danger-zone hidden" id="delete-form">
+      <h2>Delete account</h2>
+      <p>Your account will be removed. Issues and comments you posted stay on the forum (shown as "former member") so the community keeps its records.</p>
+      <label for="delete-password">Enter your password to confirm</label>
+      <input type="password" id="delete-password" required autocomplete="current-password">
+      <p class="error" id="delete-error"></p>
+      <button type="submit" class="danger">Delete my account</button>
+    </form>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    function banner(message) {
+      document.getElementById('banner').innerHTML = `<div class="success">${esc(message)}</div>`;
+      scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function init() {
+      const user = await requireUser();
+      document.getElementById('role-line').textContent = `You're signed in as ${user.role === 'admin' ? 'an administrator' : `a ${user.role}`}.`;
+
+      if (user.mustChangePassword) {
+        document.getElementById('page-title').textContent = 'Choose your password';
+        document.getElementById('role-line').textContent = `Welcome, ${user.fullName}. You're using a temporary password, so please choose your own before you continue.`;
+        document.getElementById('password-title').textContent = 'Set a new password';
+        document.getElementById('current-label').textContent = 'Temporary password';
+      } else {
+        const areas = await api('/api/areas');
+        document.getElementById('details-form').classList.remove('hidden');
+        document.getElementById('full-name').value = user.fullName;
+        document.getElementById('email').value = user.email;
+        document.getElementById('area').innerHTML = optionsHtml(areas, user.areaId, 'No particular area');
+        if (user.role !== 'admin') document.getElementById('delete-form').classList.remove('hidden');
+      }
+
+      document.getElementById('details-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById('details-error');
+        errorEl.textContent = '';
+        try {
+          const updated = await api('/api/auth/me', { method: 'PUT', body: {
+            fullName: document.getElementById('full-name').value,
+            email: document.getElementById('email').value,
+            areaId: document.getElementById('area').value,
+          } });
+          renderHeader(updated);
+          banner('Your details were saved.');
+        } catch (err) {
+          errorEl.textContent = err.message;
+        }
+      };
+
+      document.getElementById('password-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById('password-error');
+        errorEl.textContent = '';
+        try {
+          const updated = await api('/api/auth/password', { method: 'PUT', body: {
+            currentPassword: document.getElementById('current-password').value,
+            newPassword: document.getElementById('new-password').value,
+          } });
+          if (user.mustChangePassword) { location.href = homeFor(updated); return; }
+          e.target.reset();
+          banner('Your password was changed.');
+        } catch (err) {
+          errorEl.textContent = err.message;
+        }
+      };
+
+      document.getElementById('delete-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById('delete-error');
+        errorEl.textContent = '';
+        if (!confirm('Delete your account for good?')) return;
+        try {
+          await api('/api/auth/me', { method: 'DELETE', body: { password: document.getElementById('delete-password').value } });
+          location.href = '/';
+        } catch (err) {
+          errorEl.textContent = err.message;
+        }
+      };
+    }
+
+    init();
+  </script>
+</body>
+</html>

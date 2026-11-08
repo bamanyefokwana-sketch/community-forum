@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main>
+    <h1>Administration</h1>
+    <p class="muted">Manage people, the community's areas and the issue categories.</p>
+
+    <div class="tabs">
+      <button data-tab="users" class="active">People</button>
+      <button data-tab="areas">Areas</button>
+      <button data-tab="categories">Categories</button>
+    </div>
+    <div id="banner"></div>
+    <p class="error" id="error"></p>
+
+    <!-- People -->
+    <section data-panel="users">
+      <div class="card row">
+        <input type="search" id="user-search" placeholder="Search by name or email" style="flex: 2; min-width: 200px">
+        <select id="user-role" style="flex: 1; min-width: 150px">
+          <option value="">All roles</option><option value="member">Members</option>
+          <option value="leader">Leaders</option><option value="admin">Administrators</option>
+        </select>
+      </div>
+      <p class="hint" style="margin: -4px 0 10px">To make someone a community leader, change their role to Leader, then tick the areas they look after.</p>
+      <div id="users"></div>
+    </section>
+
+    <!-- Areas -->
+    <section data-panel="areas" class="hidden">
+      <form class="card row" id="area-form">
+        <input type="text" name="name" placeholder="Area name, e.g. Ward 12 / Mandela Park" maxlength="100" required style="flex: 1; min-width: 200px">
+        <input type="text" name="description" placeholder="Description (optional)" maxlength="255" style="flex: 2; min-width: 200px">
+        <button type="submit">+ Add area</button>
+      </form>
+      <div class="card table-wrap" id="areas"></div>
+    </section>
+
+    <!-- Categories -->
+    <section data-panel="categories" class="hidden">
+      <form class="card row" id="category-form">
+        <input type="text" name="name" placeholder="Category name, e.g. Parks" maxlength="60" required style="flex: 1; min-width: 200px">
+        <input type="text" name="description" placeholder="Description (optional)" maxlength="255" style="flex: 2; min-width: 200px">
+        <button type="submit">+ Add category</button>
+      </form>
+      <div class="card table-wrap" id="categories"></div>
+    </section>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    let me;
+    let areas = [];
+    let categories = [];
+    let editing = { areas: null, categories: null };
+    const errorEl = document.getElementById('error');
+    const banner = document.getElementById('banner');
+
+    function say(html) { banner.innerHTML = html; }
+    async function run(fn) {
+      errorEl.textContent = '';
+      banner.innerHTML = '';
+      try { await fn(); } catch (err) { errorEl.textContent = err.message; }
+    }
+
+    // ---------------------------------------------------------------- tabs
+    document.querySelector('.tabs').onclick = (e) => {
+      const b = e.target.closest('[data-tab]');
+      if (!b) return;
+      document.querySelectorAll('[data-tab]').forEach((t) => t.classList.toggle('active', t === b));
+      document.querySelectorAll('[data-panel]').forEach((p) => p.classList.toggle('hidden', p.dataset.panel !== b.dataset.tab));
+      errorEl.textContent = '';
+      banner.innerHTML = '';
+    };
+
+    // ---------------------------------------------------------------- people
+    async function loadUsers() {
+      const q = new URLSearchParams();
+      if (document.getElementById('user-search').value) q.set('search', document.getElementById('user-search').value);
+      if (document.getElementById('user-role').value) q.set('role', document.getElementById('user-role').value);
+      const users = await api(`/api/admin/users?${q}`);
+      document.getElementById('users').innerHTML = users.length ? users.map((u) => {
+        const self = u.id === me.id;
+        return `
+        <div class="card" data-user="${u.id}">
+          <div class="spread">
+            <div>
+              <strong>${esc(u.full_name)}</strong>${self ? ' <span class="muted small">(you)</span>' : ''}
+              ${u.is_active ? '' : ' <span class="badge status-rejected">Deactivated</span>'}
+              ${u.must_change_password ? ' <span class="badge status-in_progress">Temporary password</span>' : ''}
+              <div class="meta">${esc(u.email)} · ${u.area ? esc(u.area) : 'no home area'} · ${u.issues_reported} issue${u.issues_reported === 1 ? '' : 's'} reported · joined ${formatDate(u.created_at)}</div>
+            </div>
+            <div class="row">
+              <select data-role ${self ? 'disabled' : ''}>
+                ${['member', 'leader', 'admin'].map((r) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r[0].toUpperCase() + r.slice(1)}</option>`).join('')}
+              </select>
+              ${self ? '' : `<button class="small secondary" data-active="${u.is_active ? 0 : 1}">${u.is_active ? 'Deactivate' : 'Reactivate'}</button>`}
+              <button class="small secondary" data-reset>Reset password</button>
+              ${self ? '' : '<button class="small danger" data-delete>Delete</button>'}
+            </div>
+          </div>
+          ${u.role === 'leader' ? `
+            <div style="margin-top: 10px">
+              <span class="small muted">Looks after:</span>
+              <div class="area-picker">
+                ${areas.length ? areas.map((a) => `<label class="inline small"><input type="checkbox" data-area="${a.id}" ${u.leader_area_ids.includes(a.id) ? 'checked' : ''}> ${esc(a.name)}</label>`).join('')
+                  : '<span class="small muted">No areas exist yet. Add them on the Areas tab.</span>'}
+              </div>
+            </div>` : ''}
+        </div>`;
+      }).join('') : '<div class="card empty">No people match.</div>';
+    }
+
+    let searchTimer;
+    document.getElementById('user-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => run(loadUsers), 300); };
+    document.getElementById('user-role').onchange = () => run(loadUsers);
+
+    const usersEl = document.getElementById('users');
+    usersEl.addEventListener('change', (e) => run(async () => {
+      const card = e.target.closest('[data-user]');
+      const userId = card.dataset.user;
+      const name = card.querySelector('strong').textContent;
+      if (e.target.matches('[data-role]')) {
+        await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: { role: e.target.value } });
+        say(`<div class="success">${esc(name)} is now ${e.target.value === 'admin' ? 'an administrator' : `a ${e.target.value}`}.${e.target.value === 'leader' ? ' Tick the areas they look after.' : ''}</div>`);
+        await loadUsers();
+      }
+      if (e.target.matches('[data-area]')) {
+        const areaIds = [...card.querySelectorAll('[data-area]:checked')].map((c) => Number(c.dataset.area));
+        await api(`/api/admin/users/${userId}/areas`, { method: 'PUT', body: { areaIds } });
+        say(`<div class="success">Areas saved for ${esc(name)}.</div>`);
+      }
+    }));
+    usersEl.addEventListener('click', (e) => run(async () => {
+      const card = e.target.closest('[data-user]');
+      if (!card) return;
+      const userId = card.dataset.user;
+      const name = card.querySelector('strong').textContent;
+      const email = card.querySelector('.meta').textContent.split(' · ')[0];
+      if (e.target.matches('[data-active]')) {
+        const activate = e.target.dataset.active === '1';
+        if (!activate && !confirm(`Deactivate ${name}? They won't be able to log in, but everything they posted stays.`)) return;
+        await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: { isActive: activate } });
+        await loadUsers();
+      }
+      if (e.target.matches('[data-reset]')) {
+        if (!confirm(`Give ${name} a new temporary password? Their current password will stop working.`)) return;
+        const { tempPassword } = await api(`/api/admin/users/${userId}/reset-password`, { method: 'POST' });
+        await loadUsers();
+        say(tempPasswordNotice(name, email, tempPassword));
+      }
+      if (e.target.matches('[data-delete]')) {
+        if (!confirm(`Delete ${name}'s account?\n\nTheir issues, comments and updates stay (shown as "former member"). This can't be undone. Consider deactivating instead.`)) return;
+        await api(`/api/admin/users/${userId}`, { method: 'DELETE' });
+        say(`<div class="success">${esc(name)}'s account was deleted.</div>`);
+        await loadUsers();
+      }
+    }));
+
+    // ---------------------------------------------------------------- areas & categories
+    function refTable(kind, items) {
+      const isCat = kind === 'categories';
+      if (!items.length) return `<p class="empty">None yet. Add one above.</p>`;
+      return `<table>
+        <tr><th>Name</th><th>Description</th>${isCat ? '<th>Status</th>' : '<th>Leaders</th>'}<th>Issues</th><th></th></tr>
+        ${items.map((i) => editing[kind] === i.id ? `
+          <tr data-id="${i.id}">
+            <td><input type="text" name="name" value="${esc(i.name)}" maxlength="${isCat ? 60 : 100}"></td>
+            <td><input type="text" name="description" value="${esc(i.description || '')}" maxlength="255"></td>
+            <td>${isCat ? `<label class="inline small"><input type="checkbox" name="active" ${i.is_active ? 'checked' : ''}> Active</label>` : i.leader_count}</td>
+            <td>${i.issue_count}</td>
+            <td style="text-align: right; white-space: nowrap"><button class="small" data-save>Save</button> <button class="small secondary" data-cancel>Cancel</button></td>
+          </tr>` : `
+          <tr data-id="${i.id}">
+            <td><strong>${esc(i.name)}</strong></td>
+            <td class="muted">${esc(i.description || '')}</td>
+            <td>${isCat ? (i.is_active ? '<span class="badge status-resolved">Active</span>' : '<span class="badge">Inactive</span>') : i.leader_count}</td>
+            <td>${i.issue_count}</td>
+            <td style="text-align: right; white-space: nowrap"><button class="small secondary" data-edit>Edit</button> <button class="small danger" data-del>Delete</button></td>
+          </tr>`).join('')}
+      </table>`;
+    }
+
+    async function loadReference() {
+      [areas, categories] = await Promise.all([api('/api/areas'), api('/api/categories?all=1')]);
+      document.getElementById('areas').innerHTML = refTable('areas', areas);
+      document.getElementById('categories').innerHTML = refTable('categories', categories);
+    }
+
+    for (const kind of ['areas', 'categories']) {
+      document.getElementById(kind === 'areas' ? 'area-form' : 'category-form').onsubmit = (e) => run(async () => {
+        e.preventDefault();
+        await api(`/api/${kind}`, { method: 'POST', body: { name: e.target.name.value, description: e.target.description.value } });
+        e.target.reset();
+        await loadReference();
+        await loadUsers();
+      });
+      document.getElementById(kind).addEventListener('click', (e) => run(async () => {
+        const row = e.target.closest('[data-id]');
+        if (!row) return;
+        const itemId = Number(row.dataset.id);
+        if (e.target.matches('[data-edit]')) editing[kind] = itemId;
+        if (e.target.matches('[data-cancel]')) editing[kind] = null;
+        if (e.target.matches('[data-save]')) {
+          const body = { name: row.querySelector('[name="name"]').value, description: row.querySelector('[name="description"]').value };
+          if (kind === 'categories') body.isActive = row.querySelector('[name="active"]').checked;
+          await api(`/api/${kind}/${itemId}`, { method: 'PUT', body });
+          editing[kind] = null;
+        }
+        if (e.target.matches('[data-del]')) {
+          if (!confirm('Delete this? This cannot be undone.')) return;
+          await api(`/api/${kind}/${itemId}`, { method: 'DELETE' });
+        }
+        await loadReference();
+        if (kind === 'areas') await loadUsers();
+      }));
+    }
+
+    async function init() {
+      me = await requireUser('admin');
+      await run(async () => {
+        await loadReference();
+        await loadUsers();
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

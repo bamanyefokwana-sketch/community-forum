@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Issue</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main>
+    <p><a href="issues.html">← All issues</a></p>
+    <div id="banner"></div>
+    <p class="error" id="error"></p>
+
+    <div class="detail-grid hidden" id="page">
+      <div>
+        <div class="card" id="main"></div>
+        <div class="card hidden" id="confirm-card">
+          <h3>Has this been fixed?</h3>
+          <p class="muted small">A leader marked your issue as resolved. Let them know if it's really fixed.</p>
+          <textarea id="confirm-message" rows="2" placeholder="Optional comment (required if it's not fixed)"></textarea>
+          <div class="row" style="margin-top: 10px">
+            <button data-confirm="yes">Yes, it's fixed</button>
+            <button class="secondary" data-confirm="no">No, it's still a problem</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Progress</h3>
+          <ul class="timeline" id="timeline" style="margin-top: 12px"></ul>
+        </div>
+        <div class="card">
+          <h3 id="comments-title">Comments</h3>
+          <div id="comments"></div>
+          <form id="comment-form" style="margin-top: 8px">
+            <textarea id="comment-body" rows="3" maxlength="2000" placeholder="Add a comment or ask for an update…" required></textarea>
+            <p class="error" id="comment-error"></p>
+            <button type="submit" style="margin-top: 8px">Post comment</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="card hidden" id="manage-card">
+          <h3>Update this issue</h3>
+          <p class="muted small" style="margin: 4px 0 0">You are a leader for this area.</p>
+          <label for="m-status">Status</label>
+          <select id="m-status"></select>
+          <label for="m-priority">Priority</label>
+          <select id="m-priority">
+            <option value="low">Low</option><option value="medium">Medium</option>
+            <option value="high">High</option><option value="urgent">Urgent</option>
+          </select>
+          <label for="m-assigned">Assigned to</label>
+          <select id="m-assigned"></select>
+          <label for="m-message">Message to the community</label>
+          <textarea id="m-message" rows="3" maxlength="2000" placeholder="e.g. A team is booked for Thursday."></textarea>
+          <p class="error" id="manage-error"></p>
+          <button id="m-save" style="width: 100%; margin-top: 8px">Post update</button>
+        </div>
+        <div class="card"><dl id="details"></dl></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    const id = param('id');
+    const STEPS = ['reported', 'acknowledged', 'in_progress', 'resolved', 'closed'];
+    let user;
+    let issue;
+
+    function stepper(status) {
+      if (status === 'rejected') {
+        return `<div class="stepper rejected"><div class="step done">Reported</div><div class="step current">Rejected</div></div>`;
+      }
+      const at = STEPS.indexOf(status);
+      return `<div class="stepper">${STEPS.map((s, i) =>
+        `<div class="step ${i < at ? 'done' : i === at ? 'current' : ''}">${STATUS_LABELS[s]}</div>`).join('')}</div>`;
+    }
+
+    function renderMain() {
+      const p = issue.permissions;
+      document.title = `Community Forum · ${issue.title}`;
+      document.getElementById('main').innerHTML = `
+        <div class="row">${statusBadge(issue.status)}${priorityBadge(issue.priority)}<span class="badge">${esc(issue.category)}</span></div>
+        <h1 style="margin-top: 8px">${esc(issue.title)}</h1>
+        <div class="meta">${esc(issue.area)}${issue.location ? ' · ' + esc(issue.location) : ''}</div>
+        ${stepper(issue.status)}
+        ${issue.photos.length ? `<div class="photos">${issue.photos.map((ph) =>
+          `<img src="/api/issues/${issue.id}/photos/${ph.id}" alt="${esc(ph.file_name)}" data-full>`).join('')}</div>` : ''}
+        <p class="description">${esc(issue.description)}</p>
+        <div class="spread" style="margin-top: 14px">
+          <div class="row">
+            ${p.vote
+              ? `<button class="vote-btn ${issue.has_voted ? 'on' : 'secondary'}" id="vote">👥 ${issue.has_voted ? 'Affects me too ✓' : 'This affects me too'} · ${issue.votes}</button>`
+              : `<span class="muted">👥 ${issue.votes} other${issue.votes === 1 ? '' : 's'} affected</span>`}
+          </div>
+          <div class="row">
+            ${p.edit ? `<a class="button small secondary" href="report.html?id=${issue.id}">Edit</a>` : ''}
+            ${p.delete ? '<button class="small danger" id="delete">Delete</button>' : ''}
+          </div>
+        </div>`;
+    }
+
+    function renderDetails() {
+      const rows = [
+        ['Category', esc(issue.category)],
+        ['Area', esc(issue.area)],
+        ['Location', esc(issue.location || '–')],
+        ['Priority', PRIORITY_LABELS[issue.priority]],
+        ['Reported by', esc(issue.reporter_name || 'A former member')],
+        ['Reported', formatDate(issue.created_at)],
+        ['Assigned to', esc(issue.assigned_name || 'Nobody yet')],
+        ['Last update', formatDate(issue.updated_at)],
+      ];
+      if (issue.resolved_at) rows.push(['Resolved', formatDate(issue.resolved_at)]);
+      document.getElementById('details').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    }
+
+    function renderTimeline() {
+      document.getElementById('timeline').innerHTML = issue.updates.map((u) => {
+        let what;
+        if (!u.old_status) what = 'Reported the issue';
+        else if (u.old_status !== u.new_status) what = `${STATUS_LABELS[u.old_status]} → <strong>${STATUS_LABELS[u.new_status]}</strong>`;
+        else what = 'Update';
+        return `<li>
+          <div><strong>${esc(u.author_name || 'A former member')}</strong>${roleBadge(u.author_role)} · ${what}</div>
+          <div class="when">${formatDate(u.created_at)}</div>
+          ${u.message ? `<div class="msg">${esc(u.message)}</div>` : ''}
+        </li>`;
+      }).join('');
+    }
+
+    function renderComments() {
+      document.getElementById('comments-title').textContent = `Comments (${issue.comments.length})`;
+      document.getElementById('comments').innerHTML = issue.comments.length ? issue.comments.map((c) => `
+        <div class="comment" data-comment="${c.id}">
+          <div class="spread">
+            <div><strong>${esc(c.author_name || 'A former member')}</strong>${roleBadge(c.author_role)}
+              <span class="muted small">· ${timeAgo(c.created_at)}${c.edited_at ? ' · edited' : ''}</span></div>
+            <div class="row">
+              ${c.author_id === user.id ? '<button class="link" data-edit>Edit</button>' : ''}
+              ${c.author_id === user.id || issue.permissions.moderate ? '<button class="link" data-delete style="color: var(--bad)">Delete</button>' : ''}
+            </div>
+          </div>
+          <div class="body">${esc(c.body)}</div>
+        </div>`).join('') : '<p class="muted">No comments yet. Start the conversation.</p>';
+    }
+
+    function renderManage() {
+      const p = issue.permissions;
+      document.getElementById('manage-card').classList.toggle('hidden', !p.manage);
+      document.getElementById('confirm-card').classList.toggle('hidden', !p.confirm);
+      if (!p.manage) return;
+      document.getElementById('m-status').innerHTML = [issue.status, ...p.nextStatuses].map((s, i) =>
+        `<option value="${s}">${i === 0 ? `${STATUS_LABELS[s]} (no change)` : `→ ${STATUS_LABELS[s]}`}</option>`).join('');
+      document.getElementById('m-priority').value = issue.priority;
+      document.getElementById('m-assigned').innerHTML = '<option value="">Nobody</option>' +
+        issue.leaders.map((l) => `<option value="${l.id}" ${l.id === issue.assigned_to ? 'selected' : ''}>${esc(l.full_name)}${l.role === 'admin' ? ' (admin)' : ''}</option>`).join('');
+      document.getElementById('m-message').value = '';
+    }
+
+    async function load() {
+      try {
+        issue = await api(`/api/issues/${id}`);
+      } catch (err) {
+        document.getElementById('error').textContent = err.message;
+        return;
+      }
+      renderMain();
+      renderDetails();
+      renderTimeline();
+      renderComments();
+      renderManage();
+      document.getElementById('page').classList.remove('hidden');
+    }
+
+    function flash(message) {
+      document.getElementById('banner').innerHTML = `<div class="success">${esc(message)}</div>`;
+      setTimeout(() => { document.getElementById('banner').innerHTML = ''; }, 4000);
+    }
+
+    document.getElementById('main').addEventListener('click', async (e) => {
+      if (e.target.matches('[data-full]')) {
+        const box = document.createElement('div');
+        box.className = 'lightbox';
+        box.innerHTML = `<img src="${e.target.src}" alt="">`;
+        box.onclick = () => box.remove();
+        document.body.append(box);
+      }
+      if (e.target.closest('#vote')) {
+        const r = await api(`/api/issues/${id}/vote`, { method: issue.has_voted ? 'DELETE' : 'POST' });
+        Object.assign(issue, r);
+        renderMain();
+      }
+      if (e.target.closest('#delete')) {
+        if (!confirm('Delete this issue? Its photos, updates and comments will be deleted too.')) return;
+        await api(`/api/issues/${id}`, { method: 'DELETE' });
+        location.href = 'issues.html';
+      }
+    });
+
+    document.getElementById('confirm-card').addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-confirm]');
+      if (!b) return;
+      try {
+        await api(`/api/issues/${id}/confirm`, { method: 'POST', body: {
+          fixed: b.dataset.confirm === 'yes', message: document.getElementById('confirm-message').value,
+        } });
+        flash(b.dataset.confirm === 'yes' ? 'Thanks! The issue is now closed.' : 'Thanks. The issue has been reopened for the leaders.');
+        load();
+      } catch (err) {
+        document.getElementById('error').textContent = err.message;
+      }
+    });
+
+    document.getElementById('m-save').onclick = async () => {
+      const errorEl = document.getElementById('manage-error');
+      errorEl.textContent = '';
+      const status = document.getElementById('m-status').value;
+      try {
+        await api(`/api/issues/${id}/updates`, { method: 'POST', body: {
+          status: status === issue.status ? undefined : status,
+          priority: document.getElementById('m-priority').value,
+          assignedTo: document.getElementById('m-assigned').value || null,
+          message: document.getElementById('m-message').value,
+        } });
+        flash('Update posted.');
+        load();
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    };
+
+    document.getElementById('comment-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('comment-error');
+      errorEl.textContent = '';
+      try {
+        await api(`/api/issues/${id}/comments`, { method: 'POST', body: { body: document.getElementById('comment-body').value } });
+        document.getElementById('comment-body').value = '';
+        load();
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    };
+
+    document.getElementById('comments').addEventListener('click', async (e) => {
+      const el = e.target.closest('[data-comment]');
+      if (!el) return;
+      const commentId = el.dataset.comment;
+      try {
+        if (e.target.matches('[data-delete]')) {
+          if (!confirm('Delete this comment?')) return;
+          await api(`/api/comments/${commentId}`, { method: 'DELETE' });
+          load();
+        } else if (e.target.matches('[data-edit]')) {
+          const c = issue.comments.find((x) => x.id === Number(commentId));
+          el.querySelector('.body').innerHTML = `
+            <textarea rows="3" maxlength="2000">${esc(c.body)}</textarea>
+            <div class="row" style="margin-top: 6px"><button class="small" data-save>Save</button><button class="small secondary" data-cancel>Cancel</button></div>`;
+        } else if (e.target.matches('[data-save]')) {
+          await api(`/api/comments/${commentId}`, { method: 'PUT', body: { body: el.querySelector('textarea').value } });
+          load();
+        } else if (e.target.matches('[data-cancel]')) {
+          renderComments();
+        }
+      } catch (err) {
+        document.getElementById('comment-error').textContent = err.message;
+      }
+    });
+
+    requireUser().then((u) => { user = u; load(); });
+  </script>
+</body>
+</html>

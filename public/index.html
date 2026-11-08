@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Log in</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-hero">
+      <div class="logo">C</div>
+      <h1>Community Forum</h1>
+      <p class="muted">Report problems in your community and follow them until they're fixed.</p>
+    </div>
+
+    <div class="card">
+      <div class="auth-tabs">
+        <button id="tab-login" class="active">Log in</button>
+        <button id="tab-register">Sign up</button>
+      </div>
+
+      <form id="login-form">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" required autocomplete="username">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" required autocomplete="current-password">
+        <p class="error" id="login-error"></p>
+        <button type="submit" style="width: 100%">Log in</button>
+      </form>
+
+      <form id="register-form" class="hidden">
+        <label for="reg-name">Full name</label>
+        <input type="text" id="reg-name" required maxlength="100" autocomplete="name">
+        <label for="reg-email">Email</label>
+        <input type="email" id="reg-email" required autocomplete="username">
+        <label for="reg-password">Password <span class="muted small">(at least 8 characters)</span></label>
+        <input type="password" id="reg-password" required minlength="8" autocomplete="new-password">
+        <label for="reg-area">Your area <span class="muted small">(optional)</span></label>
+        <select id="reg-area"></select>
+        <p class="hint">Community leaders are set up by the administrator.</p>
+        <p class="error" id="register-error"></p>
+        <button type="submit" style="width: 100%">Create account</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/common.js"></script>
+  <script>
+    // Already logged in? Go straight in.
+    api('/api/auth/me').then((user) => { location.href = homeFor(user); }).catch(() => {});
+
+    const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
+    function showTab(register) {
+      loginForm.classList.toggle('hidden', register);
+      registerForm.classList.toggle('hidden', !register);
+      document.getElementById('tab-login').classList.toggle('active', !register);
+      document.getElementById('tab-register').classList.toggle('active', register);
+    }
+    document.getElementById('tab-login').onclick = () => showTab(false);
+    document.getElementById('tab-register').onclick = () => showTab(true);
+
+    api('/api/areas').then((areas) => {
+      document.getElementById('reg-area').innerHTML = optionsHtml(areas, null, 'Choose your area…');
+    }).catch(() => {});
+
+    loginForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('login-error');
+      errorEl.textContent = '';
+      try {
+        const user = await api('/api/auth/login', { method: 'POST', body: {
+          email: document.getElementById('login-email').value,
+          password: document.getElementById('login-password').value,
+        } });
+        location.href = homeFor(user);
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    };
+
+    registerForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('register-error');
+      errorEl.textContent = '';
+      try {
+        const user = await api('/api/auth/register', { method: 'POST', body: {
+          fullName: document.getElementById('reg-name').value,
+          email: document.getElementById('reg-email').value,
+          password: document.getElementById('reg-password').value,
+          areaId: document.getElementById('reg-area').value,
+        } });
+        location.href = homeFor(user);
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    };
+  </script>
+</body>
+</html>

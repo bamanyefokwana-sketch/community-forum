@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Issues</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Community issues</h1>
+        <p class="muted" style="margin: 0" id="subtitle">Everything reported in the community. Vote "me too" on issues that affect you.</p>
+      </div>
+      <a class="button accent" href="report.html">+ Report an issue</a>
+    </div>
+
+    <div class="card">
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search title, description or location">
+        <select id="status">
+          <option value="">All statuses</option>
+          <option value="open">Open (not yet resolved)</option>
+          <option value="reported">Reported</option>
+          <option value="acknowledged">Acknowledged</option>
+          <option value="in_progress">In progress</option>
+          <option value="resolved">Resolved</option>
+          <option value="closed">Closed</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <select id="category"></select>
+        <select id="area"></select>
+        <select id="sort">
+          <option value="new">Newest first</option>
+          <option value="votes">Most "me too" votes</option>
+          <option value="updated">Recently updated</option>
+          <option value="oldest">Oldest first</option>
+          <option value="priority">Highest priority</option>
+        </select>
+      </div>
+      <div class="toggles" id="toggles">
+        <button class="chip" data-toggle="mine">My reports</button>
+      </div>
+    </div>
+
+    <p class="muted small" id="count"></p>
+    <p class="error" id="error"></p>
+    <div id="list"><p class="muted">Loading…</p></div>
+    <div class="pager" id="pager"></div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    const state = { page: 1, mine: false, myAreas: false, assigned: false };
+    const listEl = document.getElementById('list');
+
+    function readFiltersFromUrl() {
+      for (const id of ['search', 'status', 'category', 'area', 'sort']) {
+        if (param(id)) document.getElementById(id).value = param(id);
+      }
+      state.mine = param('mine') === '1';
+      state.myAreas = param('myAreas') === '1';
+      state.assigned = param('assigned') === 'me';
+      state.page = Number(param('page')) || 1;
+    }
+
+    function query() {
+      const q = new URLSearchParams();
+      const v = (id) => document.getElementById(id).value;
+      if (v('search')) q.set('search', v('search'));
+      if (v('status')) q.set('status', v('status'));
+      if (v('category')) q.set('categoryId', v('category'));
+      if (v('area')) q.set('areaId', v('area'));
+      q.set('sort', v('sort'));
+      if (state.mine) q.set('mine', '1');
+      if (state.myAreas) q.set('myAreas', '1');
+      if (state.assigned) q.set('assigned', 'me');
+      q.set('page', state.page);
+      return q;
+    }
+
+    function card(i) {
+      const thumb = i.first_photo_id
+        ? `<img class="thumb" src="/api/issues/${i.id}/photos/${i.first_photo_id}" alt="" loading="lazy">`
+        : '<div class="thumb empty">📍</div>';
+      return `
+        <a class="card issue-card" href="issue.html?id=${i.id}">
+          ${thumb}
+          <div class="body">
+            <div class="row">${statusBadge(i.status)}${priorityBadge(i.priority)}<span class="badge">${esc(i.category)}</span></div>
+            <div class="issue-title">${esc(i.title)}</div>
+            <div class="meta">
+              ${esc(i.area)}${i.location ? ' · ' + esc(i.location) : ''}
+              · reported ${timeAgo(i.created_at)} by ${esc(i.reporter_name || 'a former member')}
+              ${i.assigned_name ? ` · assigned to ${esc(i.assigned_name)}` : ''}
+            </div>
+            <div class="counts">
+              <span title="People affected">👥 ${i.votes} me too${i.has_voted ? ' (incl. you)' : ''}</span>
+              <span>💬 ${i.comment_count} comment${i.comment_count === 1 ? '' : 's'}</span>
+            </div>
+          </div>
+        </a>`;
+    }
+
+    async function load() {
+      const q = query();
+      history.replaceState(null, '', `?${q.toString().replace(/categoryId/, 'category').replace(/areaId/, 'area')}`);
+      try {
+        const data = await api(`/api/issues?${q}`);
+        document.getElementById('count').textContent = `${data.total} issue${data.total === 1 ? '' : 's'}`;
+        listEl.innerHTML = data.issues.length ? data.issues.map(card).join('')
+          : '<div class="card empty">No issues match these filters.</div>';
+        document.getElementById('pager').innerHTML = data.pages > 1 ? `
+          <button class="secondary small" ${data.page <= 1 ? 'disabled' : ''} data-page="${data.page - 1}">← Previous</button>
+          <span class="muted small">Page ${data.page} of ${data.pages}</span>
+          <button class="secondary small" ${data.page >= data.pages ? 'disabled' : ''} data-page="${data.page + 1}">Next →</button>` : '';
+      } catch (err) {
+        document.getElementById('error').textContent = err.message;
+      }
+    }
+
+    function reload() { state.page = 1; load(); }
+
+    async function init() {
+      const user = await requireUser();
+      if (user.role !== 'member') {
+        document.getElementById('toggles').insertAdjacentHTML('beforeend', `
+          <button class="chip" data-toggle="myAreas">My areas</button>
+          <button class="chip" data-toggle="assigned">Assigned to me</button>`);
+      }
+      const [categories, areas] = await Promise.all([api('/api/categories?all=1'), api('/api/areas')]);
+      document.getElementById('category').innerHTML = optionsHtml(categories, null, 'All categories');
+      document.getElementById('area').innerHTML = optionsHtml(areas, null, 'All areas');
+      readFiltersFromUrl();
+      document.querySelectorAll('[data-toggle]').forEach((b) => b.classList.toggle('on', state[b.dataset.toggle]));
+
+      let timer;
+      document.getElementById('search').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(reload, 300); });
+      for (const id of ['status', 'category', 'area', 'sort']) document.getElementById(id).addEventListener('change', reload);
+      document.getElementById('toggles').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-toggle]');
+        if (!b) return;
+        state[b.dataset.toggle] = !state[b.dataset.toggle];
+        b.classList.toggle('on', state[b.dataset.toggle]);
+        reload();
+      });
+      document.getElementById('pager').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-page]');
+        if (!b) return;
+        state.page = Number(b.dataset.page);
+        load();
+        scrollTo({ top: 0 });
+      });
+      load();
+    }
+
+    init();
+  </script>
+</body>
+</html>

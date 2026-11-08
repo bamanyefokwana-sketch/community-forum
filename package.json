@@ -1,0 +1,33 @@
+{
+  "name": "community-forum",
+  "version": "1.0.0",
+  "description": "Community Forum App: report community issues, leaders track and resolve them. Node.js + Express + MySQL.",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "db:setup": "node db/setup.js",
+    "db:reset": "node db/setup.js --reset",
+    "db:check": "node tools/compare-schema.js && node tools/test-constraints.js",
+    "db:inspect": "node tools/inspect-db.js",
+    "admin:create": "node tools/create-admin.js",
+    "admin:reset-password": "node tools/reset-password.js",
+    "test:api": "node tools/test-api.js",
+    "docs:erd": "node tools/erd.js",
+    "docs:screenshots": "node tools/screenshots.js",
+    "docs:build": "node tools/erd.js && node tools/diagrams.js && node tools/screenshots.js && node docs/build/build-report.js && powershell -NoProfile -ExecutionPolicy Bypass -File docs/build/word-finalise.ps1 -Docx docs/Community-Forum-Report.docx && node docs/build/build-deck.js && node docs/build/build-manual.js && powershell -NoProfile -ExecutionPolicy Bypass -File docs/build/word-finalise.ps1 -Docx docs/Community-Forum-Installation-Manual.docx"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^18.0.4",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "mysql2": "^3.24.4"
+  },
+  "devDependencies": {
+    "docx": "^9.7.2",
+    "pptxgenjs": "^4.0.1",
+    "puppeteer-core": "^25.12.0"
+  }
+}

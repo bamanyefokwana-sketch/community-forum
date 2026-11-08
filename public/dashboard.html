@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Dashboard</h1>
+        <p class="muted" style="margin: 0" id="subtitle"></p>
+      </div>
+      <div class="toggles" id="scope">
+        <button class="chip" data-scope="mine">My areas</button>
+        <button class="chip" data-scope="all">Whole community</button>
+      </div>
+    </div>
+    <div id="no-areas" class="notice hidden">You haven't been assigned any areas yet. The administrator assigns leaders to areas on the Admin page.</div>
+    <p class="error" id="error"></p>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>Needs attention: oldest open issues</h3>
+        <div id="oldest" style="margin-top: 10px"></div>
+      </div>
+      <div class="card">
+        <h3>Most "me too" votes (open)</h3>
+        <div id="voted" style="margin-top: 10px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Issues by status</h3>
+      <div class="bars" id="by-status" style="margin-top: 12px"></div>
+    </div>
+
+    <div class="two-col">
+      <div class="card table-wrap">
+        <h3>By category</h3>
+        <table id="by-category" style="margin-top: 8px"></table>
+      </div>
+      <div class="card table-wrap">
+        <h3>By area</h3>
+        <table id="by-area" style="margin-top: 8px"></table>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    let scope = 'mine';
+
+    function issueLine(i, extra) {
+      return `<div class="spread" style="padding: 6px 0; border-bottom: 1px solid var(--border)">
+        <a href="issue.html?id=${i.id}">${esc(i.title)}</a>
+        <span class="row small">${statusBadge(i.status)} <span class="muted">${esc(i.area)} · ${extra}</span></span>
+      </div>`;
+    }
+
+    function table(rows) {
+      if (!rows.length) return '<tr><td class="muted">No issues yet.</td></tr>';
+      return `<tr><th>Name</th><th>Open</th><th>Total</th></tr>` +
+        rows.map((r) => `<tr><td>${esc(r.name)}</td><td><strong>${r.open}</strong></td><td>${r.total}</td></tr>`).join('');
+    }
+
+    async function load() {
+      document.querySelectorAll('[data-scope]').forEach((b) => b.classList.toggle('on', b.dataset.scope === scope));
+      try {
+        const s = await api(`/api/stats?scope=${scope}`);
+        const t = s.totals;
+        const q = scope === 'mine' ? '&myAreas=1' : '';
+        document.getElementById('stats').innerHTML = [
+          [t.open, 'Open issues', `issues.html?status=open${q}`],
+          [t.unassigned, 'Open and unassigned', null],
+          [s.byStatus.resolved || 0, 'Waiting for reporter to confirm', `issues.html?status=resolved${q}`],
+          [t.resolvedCount, 'Resolved in total', null],
+          [t.avgDaysToResolve == null ? '–' : `${t.avgDaysToResolve} days`, 'Average time to resolve', null],
+        ].map(([v, label, href]) => `<div class="stat"><div class="value">${href ? `<a href="${href}" style="text-decoration: none">${v}</a>` : v}</div><div class="label">${label}</div></div>`).join('');
+
+        document.getElementById('oldest').innerHTML = s.oldestOpen.length
+          ? s.oldestOpen.map((i) => issueLine(i, `reported ${timeAgo(i.created_at)}`)).join('') : '<p class="muted">No open issues. 🎉</p>';
+        document.getElementById('voted').innerHTML = s.mostVoted.length
+          ? s.mostVoted.map((i) => issueLine(i, `👥 ${i.votes}`)).join('') : '<p class="muted">No votes on open issues yet.</p>';
+
+        const max = Math.max(1, ...Object.values(s.byStatus));
+        document.getElementById('by-status').innerHTML = Object.keys(STATUS_LABELS).map((st) => `
+          <div class="bar-row"><span>${statusBadge(st)}</span>
+            <div class="bar"><span style="width: ${((s.byStatus[st] || 0) / max) * 100}%"></span></div>
+            <strong>${s.byStatus[st] || 0}</strong></div>`).join('');
+        document.getElementById('by-category').innerHTML = table(s.byCategory);
+        document.getElementById('by-area').innerHTML = table(s.byArea);
+      } catch (err) {
+        document.getElementById('error').textContent = err.message;
+      }
+    }
+
+    async function init() {
+      const user = await requireUser('leader', 'admin');
+      if (user.role === 'admin') {
+        scope = 'all';
+        document.getElementById('scope').classList.add('hidden');
+        document.getElementById('subtitle').textContent = 'The whole community at a glance.';
+      } else if (user.leaderAreas.length) {
+        document.getElementById('subtitle').textContent = `You look after: ${user.leaderAreas.map((a) => a.name).join(', ')}.`;
+      } else {
+        document.getElementById('no-areas').classList.remove('hidden');
+        scope = 'all';
+      }
+      document.getElementById('scope').onclick = (e) => {
+        const b = e.target.closest('[data-scope]');
+        if (!b) return;
+        scope = b.dataset.scope;
+        load();
+      };
+      load();
+    }
+
+    init();
+  </script>
+</body>
+</html>

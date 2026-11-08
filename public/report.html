@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Forum · Report an issue</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div class="inner"></div></header>
+  <main class="narrow">
+    <h1 id="page-title">Report an issue</h1>
+    <p class="muted">Describe the problem so community leaders can find it and act. You'll be able to follow its progress.</p>
+
+    <form class="card" id="form">
+      <label for="title">What is the problem?</label>
+      <input type="text" id="title" required minlength="5" maxlength="150" placeholder="e.g. Burst water pipe on Main Road">
+
+      <div class="grid-2">
+        <div>
+          <label for="category">Category</label>
+          <select id="category" required></select>
+        </div>
+        <div>
+          <label for="area">Area</label>
+          <select id="area" required></select>
+        </div>
+      </div>
+
+      <label for="location">Exact location <span class="muted small">(optional)</span></label>
+      <input type="text" id="location" maxlength="200" placeholder="e.g. Corner of Main Road and 5th Street, near the clinic">
+
+      <label for="description">Details</label>
+      <textarea id="description" rows="6" required minlength="10" maxlength="5000"
+        placeholder="What did you see? Since when? Is anyone in danger?"></textarea>
+
+      <div id="photo-section">
+        <label>Photos <span class="muted small">(optional, up to 3)</span></label>
+        <input type="file" id="photos" accept="image/jpeg,image/png,image/webp" multiple>
+        <p class="hint">Large photos are made smaller automatically before uploading.</p>
+        <div class="photo-previews" id="previews"></div>
+      </div>
+
+      <p class="error" id="error"></p>
+      <div class="row">
+        <button type="submit" class="accent" id="submit">Submit report</button>
+        <a class="button secondary" href="issues.html" id="cancel">Cancel</a>
+      </div>
+    </form>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    const editingId = param('id');
+    let photos = [];          // new photos: { name, type, data (base64), url }
+    let existingPhotos = [];  // when editing: photos already on the issue
+
+    // Shrinks an image to at most 1600px on its longest side and returns a JPEG data URL.
+    function shrink(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(img.src);
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        };
+        img.onerror = () => reject(new Error(`${file.name} could not be read as an image.`));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    function renderPreviews() {
+      const existing = existingPhotos.map((p) => `
+        <div class="p"><img src="/api/issues/${editingId}/photos/${p.id}" alt="">
+          <button type="button" class="danger" data-remove-existing="${p.id}" title="Remove photo">✕</button></div>`);
+      const added = photos.map((p, i) => `
+        <div class="p"><img src="${p.url}" alt="">
+          <button type="button" class="danger" data-remove="${i}" title="Remove photo">✕</button></div>`);
+      document.getElementById('previews').innerHTML = [...existing, ...added].join('');
+    }
+
+    document.getElementById('photos').onchange = async (e) => {
+      const errorEl = document.getElementById('error');
+      errorEl.textContent = '';
+      for (const file of e.target.files) {
+        if (photos.length + existingPhotos.length >= 3) { errorEl.textContent = 'You can add up to 3 photos.'; break; }
+        try {
+          const url = await shrink(file);
+          photos.push({ name: file.name.replace(/\.\w+$/, '.jpg'), type: 'image/jpeg', data: url.split(',')[1], url });
+        } catch (err) {
+          errorEl.textContent = err.message;
+        }
+      }
+      e.target.value = '';
+      renderPreviews();
+    };
+
+    document.getElementById('previews').onclick = async (e) => {
+      const remove = e.target.closest('[data-remove]');
+      const removeExisting = e.target.closest('[data-remove-existing]');
+      if (remove) photos.splice(Number(remove.dataset.remove), 1);
+      if (removeExisting) {
+        if (!confirm('Remove this photo from the issue?')) return;
+        await api(`/api/issues/${editingId}/photos/${removeExisting.dataset.removeExisting}`, { method: 'DELETE' });
+        existingPhotos = existingPhotos.filter((p) => p.id !== Number(removeExisting.dataset.removeExisting));
+      }
+      renderPreviews();
+    };
+
+    document.getElementById('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById('error');
+      const submit = document.getElementById('submit');
+      errorEl.textContent = '';
+      submit.disabled = true;
+      const body = {
+        title: document.getElementById('title').value,
+        description: document.getElementById('description').value,
+        location: document.getElementById('location').value,
+        categoryId: Number(document.getElementById('category').value),
+        areaId: Number(document.getElementById('area').value),
+      };
+      try {
+        let id = editingId;
+        if (editingId) {
+          await api(`/api/issues/${editingId}`, { method: 'PUT', body });
+          if (photos.length) await api(`/api/issues/${editingId}/photos`, { method: 'POST', body: { photos: photos.map(({ url, ...p }) => p) } });
+        } else {
+          ({ id } = await api('/api/issues', { method: 'POST', body: { ...body, photos: photos.map(({ url, ...p }) => p) } }));
+        }
+        location.href = `issue.html?id=${id}`;
+      } catch (err) {
+        errorEl.textContent = err.message;
+        submit.disabled = false;
+      }
+    };
+
+    async function init() {
+      const user = await requireUser();
+      const [categories, areas] = await Promise.all([api('/api/categories'), api('/api/areas')]);
+      document.getElementById('category').innerHTML = optionsHtml(categories, null, 'Choose a category…');
+      document.getElementById('area').innerHTML = optionsHtml(areas, user.areaId, 'Choose an area…');
+      if (areas.length === 0) {
+        document.getElementById('error').textContent = 'No areas have been set up yet. Ask the administrator to add the community\'s areas first.';
+      }
+      if (!editingId) return;
+
+      const issue = await api(`/api/issues/${editingId}`);
+      if (!issue.permissions.edit) {
+        location.href = `issue.html?id=${editingId}`;
+        return;
+      }
+      document.title = 'Community Forum · Edit issue';
+      document.getElementById('page-title').textContent = 'Edit your report';
+      document.getElementById('submit').textContent = 'Save changes';
+      document.getElementById('cancel').href = `issue.html?id=${editingId}`;
+      document.getElementById('title').value = issue.title;
+      document.getElementById('description').value = issue.description;
+      document.getElementById('location').value = issue.location || '';
+      document.getElementById('category').value = issue.category_id;
+      document.getElementById('area').value = issue.area_id;
+      existingPhotos = issue.photos;
+      renderPreviews();
+    }
+
+    init();
+  </script>
+</body>
+</html>
